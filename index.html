@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Penandatangan PDF Mandiri - Samkid Project</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- PDF-Lib untuk manipulasi PDF -->
+    <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+    <!-- PDF.js untuk rendering preview -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
+    <!-- Signature Pad untuk menggambar tanda tangan -->
+    <script src="https://cdn.jsdelivr.net/npm/signature_pad@4.1.5/dist/signature_pad.umd.min.js"></script>
+    <style>
+        :root {
+            --chrome-blue: #1a73e8;
+            --chrome-blue-hover: #1557b0;
+            --chrome-bg: #f1f3f4;
+            --chrome-border: #dadce0;
+        }
+        body {
+            background-color: var(--chrome-bg);
+            color: #3c4043;
+            overscroll-behavior-y: contain; /* Mencegah pull-to-refresh saat tanda tangan */
+        }
+        #pdf-canvas-container {
+            position: relative;
+            display: inline-block;
+            box-shadow: 0 1px 3px rgba(60,64,67,0.3), 0 4px 8px 3px rgba(60,64,67,0.15);
+            background-color: white;
+            line-height: 0;
+            touch-action: none; /* Penting untuk mobile drag */
+        }
+        .overlay-element {
+            position: absolute;
+            cursor: move;
+            border: 2px solid var(--chrome-blue);
+            background: rgba(26, 115, 232, 0.1);
+            user-select: none;
+            min-width: 50px; /* Diperbesar untuk mobile */
+            min-height: 50px;
+            z-index: 100;
+            touch-action: none;
+        }
+        .resizer {
+            width: 24px; /* Target sentuh diperbesar */
+            height: 24px;
+            background: var(--chrome-blue);
+            position: absolute;
+            right: -12px;
+            bottom: -12px;
+            cursor: nwse-resize;
+            border-radius: 4px;
+            border: 2px solid white;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+        #signature-pad-canvas {
+            border: 1px solid var(--chrome-border);
+            border-radius: 8px;
+            width: 100%;
+            height: 200px; /* Lebih tinggi untuk mobile */
+            touch-action: none;
+            background-color: white;
+        }
+        .delete-btn {
+            position: absolute;
+            top: -15px;
+            right: -15px;
+            background: #d93025;
+            color: white;
+            border-radius: 50%;
+            width: 30px; /* Lebih besar untuk mudah diklik jari */
+            height: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            cursor: pointer;
+            border: 2px solid white;
+            z-index: 110;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        }
+        .step-locked {
+            opacity: 0.4;
+            pointer-events: none;
+            filter: grayscale(1);
+        }
+        .chrome-card {
+            background: white;
+            border: 1px solid var(--chrome-border);
+            border-radius: 8px;
+        }
+        .btn-chrome-primary {
+            background-color: var(--chrome-blue);
+            color: white;
+            padding: 10px 16px;
+        }
+        /* Mobile adjustment for the preview area */
+        .preview-area {
+            background-color: #e8eaed;
+            padding: 1rem;
+            min-height: 50vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            overflow: auto;
+            border: 1px solid #dadce0;
+            border-radius: 12px;
+        }
+    </style>
+</head>
+<body class="min-h-screen font-sans flex flex-col">
+
+    <nav class="bg-white border-b border-[#dadce0] px-4 py-3 flex justify-between items-center sticky top-0 z-[1000]">
+        <h1 class="text-lg font-medium text-[#5f6368] flex items-center gap-2">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#1a73e8" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><path d="M10 13l2 2 4-4"/></svg>
+            Tandatangan PDF
+        </h1>
+        <button id="download-btn" disabled class="bg-[#1e8e3e] hover:bg-[#188038] disabled:bg-[#f1f3f4] disabled:text-[#bdc1c6] text-white px-4 py-2 rounded-[4px] transition flex items-center gap-2 text-sm font-medium shadow-sm">
+            Simpan
+        </button>
+    </nav>
+
+    <main class="p-4 max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-4 gap-6 flex-grow w-full">
+        
+        <div class="lg:col-span-1 space-y-4">
+            <!-- LANGKAH 1 -->
+            <div id="step-1-panel" class="chrome-card p-4 border-l-4 border-l-[#1a73e8]">
+                <h2 class="font-medium mb-3 text-[#202124] flex items-center gap-2 text-sm">
+                    <span class="bg-[#1a73e8] text-white w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold">1</span>
+                    Unggah PDF
+                </h2>
+                <label class="block w-full bg-[#f8f9fa] border border-[#dadce0] p-4 rounded-lg cursor-pointer text-center active:bg-[#e8eaed]">
+                    <span class="text-xs font-medium text-[#1a73e8] flex flex-col items-center gap-2">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                        Klik Untuk Unggah
+                    </span>
+                    <input type="file" id="pdf-upload" accept="application/pdf" class="hidden">
+                </label>
+                <p id="pdf-name-display" class="text-[10px] text-[#5f6368] mt-2 truncate font-medium"></p>
+            </div>
+
+            <!-- LANGKAH 2 -->
+            <div id="step-2-panel" class="chrome-card p-4 step-locked">
+                <h2 class="font-medium mb-2 text-[#202124] flex items-center gap-2 text-sm">
+                    <span class="bg-[#5f6368] text-white w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold step-number">2</span>
+                    Tanda Tangan
+                </h2>
+                <canvas id="signature-pad-canvas"></canvas>
+                <div class="flex gap-2 mt-3">
+                    <button id="clear-pad" class="text-xs text-[#d93025] p-2 font-medium">Hapus</button>
+                    <button id="add-to-pdf" class="ml-auto btn-chrome-primary rounded-[4px] text-xs font-medium">Gunakan</button>
+                </div>
+            </div>
+
+            <!-- LANGKAH 3 -->
+            <div id="step-3-panel" class="chrome-card p-4 step-locked">
+                <div class="flex items-center justify-between mb-2">
+                    <h2 class="font-medium text-[#202124] flex items-center gap-2 text-sm">
+                        <span class="bg-[#5f6368] text-white w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold step-number">3</span>
+                        Cap / Stempel
+                    </h2>
+                </div>
+                <label class="block w-full text-center border border-[#dadce0] bg-[#f8f9fa] p-4 rounded-lg cursor-pointer active:bg-[#e8eaed]">
+                    <span class="text-[11px] font-medium text-[#5f6368]" id="stamp-filename">Pilih Gambar Cap</span>
+                    <input type="file" id="stamp-upload" accept="image/*" class="hidden">
+                </label>
+                <button id="add-stamp-btn" disabled class="w-full mt-2 btn-chrome-primary rounded-[4px] text-xs font-medium disabled:bg-[#f1f3f4] disabled:text-[#bdc1c6]">Gunakan Cap</button>
+            </div>
+
+            <!-- Kontrol Halaman -->
+            <div id="controls" class="chrome-card p-3 hidden">
+                <div class="flex items-center justify-between">
+                    <button id="prev-page" class="p-3 border border-[#dadce0] rounded-md active:bg-[#f1f3f4]">←</button>
+                    <span id="page-info" class="text-xs font-bold text-[#1a73e8]">1 / 1</span>
+                    <button id="next-page" class="p-3 border border-[#dadce0] rounded-md active:bg-[#f1f3f4]">→</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Area Preview PDF -->
+        <div class="lg:col-span-3 preview-area">
+            <div id="pdf-wrapper" class="hidden text-center w-full">
+                <div id="pdf-canvas-container">
+                    <canvas id="pdf-render-canvas"></canvas>
+                </div>
+                <div class="mt-4 bg-white p-3 rounded-lg border border-[#dadce0] shadow-sm inline-block w-full max-w-xs">
+                    <p class="text-[#3c4043] text-[11px]">
+                        <span class="text-[#1a73e8] font-bold">Tips Mobile:</span> Geser tanda tangan dengan satu jari. Gunakan tombol biru di pojok kanan bawah elemen untuk mengatur ukuran.
+                    </p>
+                </div>
+            </div>
+
+            <div id="empty-state" class="flex flex-col items-center justify-center text-[#5f6368] h-full py-20">
+                <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#1a73e8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="mb-4 opacity-50"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
+                <p class="text-sm font-medium text-[#202124]">Belum ada dokumen</p>
+                <p class="text-xs text-[#5f6368] mt-1 text-center px-4">Unggah file PDF dari memori ponsel Anda untuk memulai.</p>
+            </div>
+        </div>
+    </main>
+
+    <footer class="bg-white border-t border-[#dadce0] py-4 text-center">
+        <p class="text-[#5f6368] text-[10px] font-medium px-4">
+            &copy; 2026 <span class="text-[#1a73e8] font-bold">Samkid Project</span> - Optimasi untuk Android & iOS.
+        </p>
+    </footer>
+
+    <script>
+        let pdfDoc = null;
+        let pdfBytes = null;
+        let currentPage = 1;
+        let totalPages = 0;
+        let signaturePad = null;
+        let stampDataUrl = null;
+        let activeElements = []; 
+        let pdfScale = 1.0;
+
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
+
+        const canvas = document.getElementById('pdf-render-canvas');
+        const ctx = canvas.getContext('2d');
+        const pdfContainer = document.getElementById('pdf-canvas-container');
+
+        window.onload = () => {
+            const sigCanvas = document.getElementById('signature-pad-canvas');
+            signaturePad = new SignaturePad(sigCanvas, {
+                backgroundColor: 'rgba(255, 255, 255, 0)',
+                penColor: 'rgb(0, 0, 0)'
+            });
+            
+            function resizeSigPad() {
+                const ratio = Math.max(window.devicePixelRatio || 1, 1);
+                sigCanvas.width = sigCanvas.offsetWidth * ratio;
+                sigCanvas.height = sigCanvas.offsetHeight * ratio;
+                sigCanvas.getContext("2d").scale(ratio, ratio);
+                signaturePad.clear();
+            }
+            
+            window.addEventListener('resize', () => {
+                resizeSigPad();
+                if(pdfDoc) renderPage(currentPage);
+            });
+            resizeSigPad();
+        };
+
+        // STEP 1: UPLOAD PDF
+        document.getElementById('pdf-upload').addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            
+            document.getElementById('pdf-name-display').textContent = file.name;
+            const buffer = await file.arrayBuffer();
+            pdfBytes = buffer;
+            const loadingTask = pdfjsLib.getDocument({ data: pdfBytes.slice(0) });
+            pdfDoc = await loadingTask.promise;
+            totalPages = pdfDoc.numPages;
+            currentPage = 1;
+
+            document.getElementById('empty-state').classList.add('hidden');
+            document.getElementById('pdf-wrapper').classList.remove('hidden');
+            document.getElementById('controls').classList.remove('hidden');
+            document.getElementById('download-btn').disabled = false;
+            
+            unlockStep(2);
+            unlockStep(3);
+            renderPage(currentPage);
+        });
+
+        function unlockStep(num) {
+            const panel = document.getElementById(`step-${num}-panel`);
+            if (panel) {
+                panel.classList.remove('step-locked');
+                const stepNum = panel.querySelector('.step-number');
+                if (stepNum) stepNum.style.backgroundColor = '#1a73e8';
+            }
+        }
+
+        async function renderPage(num) {
+            if (!pdfDoc) return;
+            const page = await pdfDoc.getPage(num);
+            const previewArea = document.querySelector('.preview-area');
+            const wrapperWidth = previewArea.clientWidth - 32; // Padding mobile
+            
+            const unscaledViewport = page.getViewport({ scale: 1 });
+            pdfScale = wrapperWidth / unscaledViewport.width;
+            
+            const viewport = page.getViewport({ scale: pdfScale });
+            canvas.height = viewport.height;
+            canvas.width = viewport.width;
+            
+            await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+            document.getElementById('page-info').textContent = `${num} / ${totalPages}`;
+            document.getElementById('prev-page').disabled = (num <= 1);
+            document.getElementById('next-page').disabled = (num >= totalPages);
+            updateElementsVisibility();
+        }
+
+        // STEP 3: STAMP
+        document.getElementById('stamp-upload').addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                stampDataUrl = event.target.result;
+                document.getElementById('stamp-filename').textContent = file.name;
+                document.getElementById('add-stamp-btn').disabled = false;
+            };
+            reader.readAsDataURL(file);
+        });
+
+        document.getElementById('clear-pad').addEventListener('click', () => signaturePad.clear());
+
+        function createOverlayElement(dataUrl, type = 'sig') {
+            const el = document.createElement('div');
+            el.className = 'overlay-element';
+            el.dataset.page = currentPage;
+            el.style.width = (type === 'stamp' ? 80 : 120) + 'px';
+            el.style.height = (type === 'stamp' ? 80 : 60) + 'px';
+            el.style.top = '20px';
+            el.style.left = '20px';
+            
+            const img = document.createElement('img');
+            img.src = dataUrl;
+            img.className = 'w-full h-full block pointer-events-none object-contain';
+            
+            const resizer = document.createElement('div');
+            resizer.className = 'resizer';
+            
+            const deleter = document.createElement('div');
+            deleter.className = 'delete-btn';
+            deleter.innerHTML = '&times;';
+            deleter.onclick = (e) => {
+                e.stopPropagation();
+                el.remove();
+                activeElements = activeElements.filter(item => item.element !== el);
+            };
+            
+            el.appendChild(img);
+            el.appendChild(resizer);
+            el.appendChild(deleter);
+            pdfContainer.appendChild(el);
+            makeElementInteractable(el);
+            activeElements.push({ element: el, data: dataUrl, page: currentPage, type: type });
+        }
+
+        document.getElementById('add-to-pdf').addEventListener('click', () => {
+            if (signaturePad.isEmpty()) return;
+            createOverlayElement(signaturePad.toDataURL('image/png'), 'sig');
+        });
+
+        document.getElementById('add-stamp-btn').addEventListener('click', () => {
+            if (stampDataUrl) createOverlayElement(stampDataUrl, 'stamp');
+        });
+
+        function makeElementInteractable(el) {
+            const resizer = el.querySelector('.resizer');
+            let isResizing = false;
+            let startX, startY, startW, startH, startLeft, startTop;
+
+            const handleStart = (e) => {
+                // Gunakan clientX dari mouse atau sentuhan pertama
+                const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+                const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+
+                if (e.target === resizer) {
+                    isResizing = true;
+                    startX = clientX;
+                    startY = clientY;
+                    startW = el.offsetWidth;
+                    startH = el.offsetHeight;
+                } else {
+                    isResizing = false;
+                    startLeft = el.offsetLeft;
+                    startTop = el.offsetTop;
+                    startX = clientX;
+                    startY = clientY;
+                }
+
+                document.addEventListener('mousemove', handleMove);
+                document.addEventListener('touchmove', handleMove, { passive: false });
+                document.addEventListener('mouseup', handleEnd);
+                document.addEventListener('touchend', handleEnd);
+            };
+
+            const handleMove = (e) => {
+                if (e.type === 'touchmove') e.preventDefault(); // Mencegah scrolling saat drag
+
+                const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+                const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+
+                if (isResizing) {
+                    const dx = clientX - startX;
+                    const dy = clientY - startY;
+                    const newW = Math.max(40, startW + dx);
+                    const newH = Math.max(40, startH + dy);
+                    
+                    if (el.offsetLeft + newW <= pdfContainer.offsetWidth) el.style.width = newW + 'px';
+                    if (el.offsetTop + newH <= pdfContainer.offsetHeight) el.style.height = newH + 'px';
+                } else {
+                    const dx = clientX - startX;
+                    const dy = clientY - startY;
+                    let nx = startLeft + dx;
+                    let ny = startTop + dy;
+                    
+                    nx = Math.max(0, Math.min(nx, pdfContainer.offsetWidth - el.offsetWidth));
+                    ny = Math.max(0, Math.min(ny, pdfContainer.offsetHeight - el.offsetHeight));
+                    
+                    el.style.left = nx + 'px';
+                    el.style.top = ny + 'px';
+                }
+            };
+
+            const handleEnd = () => {
+                document.removeEventListener('mousemove', handleMove);
+                document.removeEventListener('touchmove', handleMove);
+            };
+
+            el.addEventListener('mousedown', handleStart);
+            el.addEventListener('touchstart', handleStart, { passive: false });
+        }
+
+        function updateElementsVisibility() {
+            activeElements.forEach(item => {
+                item.element.style.display = parseInt(item.element.dataset.page) === currentPage ? 'block' : 'none';
+            });
+        }
+
+        document.getElementById('prev-page').addEventListener('click', () => {
+            if (currentPage > 1) { currentPage--; renderPage(currentPage); }
+        });
+
+        document.getElementById('next-page').addEventListener('click', () => {
+            if (currentPage < totalPages) { currentPage++; renderPage(currentPage); }
+        });
+
+        document.getElementById('download-btn').addEventListener('click', async () => {
+            if (activeElements.length === 0) return alert("Tambahkan tanda tangan dulu!");
+            try {
+                const pdfDocInstance = await PDFLib.PDFDocument.load(pdfBytes.slice(0));
+                const pages = pdfDocInstance.getPages();
+                for (const item of activeElements) {
+                    const el = item.element;
+                    const pageIndex = parseInt(el.dataset.page) - 1;
+                    const page = pages[pageIndex];
+                    const embedImg = item.data.includes('png') ? await pdfDocInstance.embedPng(item.data) : await pdfDocInstance.embedJpg(item.data);
+                    const { width: pdfW, height: pdfH } = page.getSize();
+                    
+                    const finalX = (parseFloat(el.style.left) / canvas.width) * pdfW;
+                    const finalW = (el.offsetWidth / canvas.width) * pdfW;
+                    const finalH = (el.offsetHeight / canvas.height) * pdfH;
+                    const finalY = pdfH - ((parseFloat(el.style.top) / canvas.height) * pdfH) - finalH;
+                    
+                    page.drawImage(embedImg, { x: finalX, y: finalY, width: finalW, height: finalH });
+                }
+                const modifiedBytes = await pdfDocInstance.save();
+                const blob = new Blob([modifiedBytes], { type: 'application/pdf' });
+                const link = document.createElement('a');
+                link.href = URL.createObjectURL(blob);
+                link.download = `Signed_${Date.now()}.pdf`;
+                link.click();
+            } catch (err) { alert("Gagal memproses PDF."); }
+        });
+    </script>
+</body>
+</html>
